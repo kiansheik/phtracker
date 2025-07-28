@@ -122,8 +122,6 @@
     <div id="logEntries"></div>
   </div>
 
-<!-- KEEP THE SAME HTML/CSS AS ABOVE -->
-<!-- Replace just the <script> section below -->
 
 <script>
   let state = JSON.parse(localStorage.getItem('phAdjustState')) || {
@@ -192,7 +190,7 @@
     entry.volumeAdded = volumeAdded;
     entry.step = 'waiting';
     entry.waitStart = Date.now();
-    entry.waitEnd = Date.now() + 30 * 60 * 1000;
+    entry.waitEnd = Date.now() + 1 * 60 * 1000;
     save();
 
     document.getElementById('phUpdateSection').style.display = 'block';
