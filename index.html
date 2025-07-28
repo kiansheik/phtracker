@@ -15,6 +15,20 @@
     h1, h2 {
       text-align: center;
     }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #reset {
+      background: #dc3545;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      border-radius: 5px;
+      margin: 0.5rem 0;
+    }
     .section {
       background: white;
       padding: 1rem;
@@ -49,18 +63,18 @@
       border: 1px solid #ccc;
       border-radius: 5px;
     }
-    #reset {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      background: #dc3545;
+    .log-label {
+      font-weight: bold;
+      margin-bottom: 0.25rem;
     }
   </style>
 </head>
 <body>
 
-  <button id="reset">Reset</button>
-  <h1>Hydroponic pH Adjuster</h1>
+  <div class="header">
+    <h1>pH Adjuster</h1>
+    <button id="reset">Reset</button>
+  </div>
 
   <div id="setup" class="section">
     <h2>System Setup</h2>
@@ -77,7 +91,7 @@
   </div>
 
   <div id="cycle" class="section" style="display:none">
-    <h2>New Adjustment Cycle</h2>
+    <h2>Adjustment Cycle</h2>
     <label>pH Before Adding
       <input type="number" step="0.01" id="phBefore">
     </label>
@@ -92,7 +106,7 @@
       <label>Volume Actually Added (L)
         <input type="number" step="0.01" id="volumeAdded">
       </label>
-      <button onclick="logAddition()">Log Addition</button>
+      <button onclick="logBeforeAddition()">Log Addition + Wait</button>
     </div>
 
     <div id="phUpdateSection" style="display:none">
@@ -108,128 +122,205 @@
     <div id="logEntries"></div>
   </div>
 
-  <script>
-    let state = JSON.parse(localStorage.getItem('phAdjustState')) || {
-      targetPH: null,
-      estimatedVolume: null,
-      lastPH: null,
-      log: []
+<!-- KEEP THE SAME HTML/CSS AS ABOVE -->
+<!-- Replace just the <script> section below -->
+
+<script>
+  let state = JSON.parse(localStorage.getItem('phAdjustState')) || {
+    targetPH: null,
+    estimatedVolume: null,
+    lastPH: null,
+    lastWaterPH: null,
+    log: [],
+    currentCycle: null
+  };
+
+  let countdownInterval;
+
+  const h = pH => Math.pow(10, -pH);
+  const save = () => localStorage.setItem('phAdjustState', JSON.stringify(state));
+  const now = () => new Date().toISOString();
+  const formatVolume = volume => volume < 0.1 ? `${Math.round(volume * 1000)} mL` : `${volume.toFixed(2)} L`;
+
+  function startTracking() {
+    state.targetPH = parseFloat(document.getElementById('targetPH').value);
+    state.estimatedVolume = parseFloat(document.getElementById('estimatedVolume').value);
+    state.lastPH = parseFloat(document.getElementById('initialPH').value);
+    save();
+
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('cycle').style.display = 'block';
+    document.getElementById('phBefore').value = state.lastPH;
+    if (state.lastWaterPH !== null) {
+      document.getElementById('phAdded').value = state.lastWaterPH;
+    }
+  }
+
+  function recommendAddition() {
+    const phBefore = parseFloat(document.getElementById('phBefore').value);
+    const phAdded = parseFloat(document.getElementById('phAdded').value);
+
+    state.lastWaterPH = phAdded;
+    save();
+
+    const targetH = h(state.targetPH);
+    const H_u = h(phBefore);
+    const H_a = h(phAdded);
+    const V = state.estimatedVolume;
+
+    const numerator = V * (H_u - targetH);
+    const denominator = targetH - H_a;
+    const recommended = numerator / denominator;
+
+    document.getElementById('recommendation').textContent =
+      `Recommended volume to add: ${formatVolume(recommended)}`;
+    document.getElementById('additionSection').style.display = 'block';
+
+    state.currentCycle = {
+      step: 'before',
+      timeBefore: now(),
+      phBefore,
+      phAdded,
+      recommendedVolume: recommended
     };
+    save();
+  }
 
-    const save = () => localStorage.setItem('phAdjustState', JSON.stringify(state));
-    const h = pH => Math.pow(10, -pH);
+  function logBeforeAddition() {
+    const volumeAdded = parseFloat(document.getElementById('volumeAdded').value);
+    const entry = state.currentCycle;
+    entry.volumeAdded = volumeAdded;
+    entry.step = 'waiting';
+    entry.waitStart = Date.now();
+    entry.waitEnd = Date.now() + 30 * 60 * 1000;
+    save();
 
-    function startTracking() {
-      state.targetPH = parseFloat(document.getElementById('targetPH').value);
-      state.estimatedVolume = parseFloat(document.getElementById('estimatedVolume').value);
-      state.lastPH = parseFloat(document.getElementById('initialPH').value);
-      save();
-      document.getElementById('setup').style.display = 'none';
-      document.getElementById('cycle').style.display = 'block';
-    }
+    document.getElementById('phUpdateSection').style.display = 'block';
+    startCountdown(entry.waitEnd);
 
-    function recommendAddition() {
-      const phBefore = parseFloat(document.getElementById('phBefore').value);
-      const phAdded = parseFloat(document.getElementById('phAdded').value);
-      const targetH = h(state.targetPH);
-      const H_u = h(phBefore);
-      const H_a = h(phAdded);
-      const V = state.estimatedVolume;
-
-      const numerator = V * (H_u - targetH);
-      const denominator = targetH - H_a;
-      const recommended = numerator / denominator;
-
-      document.getElementById('recommendation').textContent =
-        `Recommended volume to add: ${recommended.toFixed(3)} L`;
-
-      document.getElementById('additionSection').style.display = 'block';
-      state.currentCycle = {
-        time: new Date().toISOString(),
-        phBefore,
-        phAdded,
-        recommendedVolume: recommended
-      };
-      save();
-    }
-
-    function logAddition() {
-      const volumeAdded = parseFloat(document.getElementById('volumeAdded').value);
-      state.currentCycle.volumeAdded = volumeAdded;
-      document.getElementById('phUpdateSection').style.display = 'block';
-      save();
-
-      // Optional 30-min reminder
-      if ("Notification" in window) {
-        Notification.requestPermission().then(permission => {
-          if (permission === "granted") {
-            setTimeout(() => {
-              new Notification("Time to measure new pH!");
-            }, 1800000 / 30); // 30 minutes
-          }
-        });
-      }
-    }
-
-    function updateVolumeEstimate() {
-      const phAfter = parseFloat(document.getElementById('phAfter').value);
-      const { phBefore, phAdded, volumeAdded } = state.currentCycle;
-      const H_u = h(phBefore);
-      const H_a = h(phAdded);
-      const H_f = h(phAfter);
-
-      const newEstimate = volumeAdded * (H_f - H_a) / (H_u - H_f);
-      state.estimatedVolume = newEstimate;
-      state.lastPH = phAfter;
-      state.currentCycle.phAfter = phAfter;
-      state.currentCycle.volumeEstimate = newEstimate;
-
-      state.log.push(state.currentCycle);
-      delete state.currentCycle;
-      save();
-      renderLog();
-
-      // Reset cycle form
-      document.getElementById('phBefore').value = phAfter;
-      document.getElementById('phAdded').value = '';
-      document.getElementById('volumeAdded').value = '';
-      document.getElementById('phAfter').value = '';
-      document.getElementById('additionSection').style.display = 'none';
-      document.getElementById('phUpdateSection').style.display = 'none';
-      document.getElementById('recommendation').textContent = '';
-    }
-
-    function renderLog() {
-      const container = document.getElementById('logEntries');
-      container.innerHTML = '';
-      state.log.forEach((entry, i) => {
-        const div = document.createElement('div');
-        div.className = 'log-entry';
-        div.innerHTML = `
-          <strong>Step ${i+1}</strong> - ${new Date(entry.time).toLocaleString()}<br>
-          Before: ${entry.phBefore}, Added Water pH: ${entry.phAdded}<br>
-          Volume Added: ${entry.volumeAdded} L<br>
-          After: ${entry.phAfter}<br>
-          Estimated Volume: ${entry.volumeEstimate.toFixed(2)} L
-        `;
-        container.appendChild(div);
+    if ("Notification" in window) {
+      Notification.requestPermission().then(permission => {
+        if (permission === "granted") {
+          new Notification("⏳ pH timer started: we'll remind you in 30 minutes!");
+          setTimeout(() => {
+            new Notification("⏱ Time to measure new pH!");
+          }, 30 * 60 * 1000);
+        }
       });
     }
 
-    document.getElementById('reset').addEventListener('click', () => {
-      if (confirm('Are you sure you want to reset the process?')) {
-        localStorage.removeItem('phAdjustState');
-        location.reload();
+    renderLog();
+  }
+
+  function updateVolumeEstimate() {
+    const phAfter = parseFloat(document.getElementById('phAfter').value);
+    const { phBefore, phAdded, volumeAdded } = state.currentCycle;
+
+    const H_u = h(phBefore);
+    const H_a = h(phAdded);
+    const H_f = h(phAfter);
+    const newEstimate = volumeAdded * (H_f - H_a) / (H_u - H_f);
+
+    state.estimatedVolume = newEstimate;
+    state.lastPH = phAfter;
+
+    const fullEntry = {
+      ...state.currentCycle,
+      step: 'after',
+      timeAfter: now(),
+      phAfter,
+      volumeEstimate: newEstimate
+    };
+
+    state.log.push(fullEntry);
+    state.currentCycle = null;
+    save();
+    clearInterval(countdownInterval);
+    renderLog();
+
+    document.getElementById('phBefore').value = phAfter;
+    document.getElementById('phAdded').value = state.lastWaterPH ?? '';
+    document.getElementById('volumeAdded').value = '';
+    document.getElementById('phAfter').value = '';
+    document.getElementById('additionSection').style.display = 'none';
+    document.getElementById('phUpdateSection').style.display = 'none';
+    document.getElementById('recommendation').textContent = '';
+    document.getElementById('countdown').textContent = '';
+  }
+
+  function startCountdown(targetTime) {
+    const display = document.getElementById('countdown');
+    if (!display) return;
+
+    function updateCountdown() {
+      const diff = targetTime - Date.now();
+      if (diff <= 0) {
+        display.textContent = "⏱ Please measure the pH now.";
+        clearInterval(countdownInterval);
+      } else {
+        const min = Math.floor(diff / 60000);
+        const sec = Math.floor((diff % 60000) / 1000);
+        display.textContent = `⏳ ${min}m ${sec}s until next pH reading`;
       }
+    }
+
+    updateCountdown();
+    countdownInterval = setInterval(updateCountdown, 1000);
+  }
+
+  function renderLog() {
+    const container = document.getElementById('logEntries');
+    container.innerHTML = '';
+
+    state.log.forEach((entry, i) => {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+
+      div.innerHTML = `
+        <div class="log-label">Step ${i + 1} – ${new Date(entry.timeBefore).toLocaleString()}</div>
+        ➤ pH Before: ${entry.phBefore}, Water pH: ${entry.phAdded}<br>
+        ➤ Volume Added: ${formatVolume(entry.volumeAdded)}<br>
+        ➤ pH After: ${entry.phAfter} (${new Date(entry.timeAfter).toLocaleTimeString()})<br>
+        ➤ New Volume Estimate: ${entry.volumeEstimate.toFixed(2)} L
+      `;
+      container.appendChild(div);
     });
 
-    // On page load
-    if (state.targetPH && state.estimatedVolume && state.lastPH) {
-      document.getElementById('setup').style.display = 'none';
-      document.getElementById('cycle').style.display = 'block';
-      document.getElementById('phBefore').value = state.lastPH;
+    if (state.currentCycle?.step === 'waiting') {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+      div.innerHTML = `
+        <div class="log-label">Pending Step in Progress</div>
+        Started: ${new Date(state.currentCycle.timeBefore).toLocaleString()}<br>
+        ➤ pH Before: ${state.currentCycle.phBefore}, Water pH: ${state.currentCycle.phAdded}<br>
+        ➤ Volume Added: ${formatVolume(state.currentCycle.volumeAdded)}<br>
+        <div id="countdown" style="margin-top: 0.5rem; font-weight: bold;"></div>
+      `;
+      container.appendChild(div);
+      startCountdown(state.currentCycle.waitEnd);
     }
-    renderLog();
-  </script>
+  }
+
+  document.getElementById('reset').addEventListener('click', () => {
+    if (confirm('Reset the entire process and delete saved data?')) {
+      localStorage.removeItem('phAdjustState');
+      clearInterval(countdownInterval);
+      location.reload();
+    }
+  });
+
+  // Restore session
+  if (state.targetPH && state.estimatedVolume && state.lastPH !== null) {
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('cycle').style.display = 'block';
+    document.getElementById('phBefore').value = state.lastPH;
+    if (state.lastWaterPH !== null) {
+      document.getElementById('phAdded').value = state.lastWaterPH;
+    }
+  }
+
+  renderLog();
+</script>
+
 </body>
 </html>
