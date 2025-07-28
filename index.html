@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hydroponic pH Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f8f9fa;
+      padding: 1rem;
+      max-width: 600px;
+      margin: auto;
+    }
+    h1, h2 {
+      text-align: center;
+    }
+    .section {
+      background: white;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin-top: 1rem;
+    }
+    input {
+      width: 100%;
+      padding: 0.5rem;
+      font-size: 1rem;
+      margin-top: 0.25rem;
+    }
+    button {
+      padding: 0.75rem;
+      margin-top: 1rem;
+      width: 100%;
+      font-size: 1rem;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 5px;
+    }
+    .log-entry {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      background: #fff;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+    #reset {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #dc3545;
+    }
+  </style>
+</head>
+<body>
+
+  <button id="reset">Reset</button>
+  <h1>Hydroponic pH Adjuster</h1>
+
+  <div id="setup" class="section">
+    <h2>System Setup</h2>
+    <label>Target pH
+      <input type="number" step="0.01" id="targetPH" required>
+    </label>
+    <label>Estimated System Volume (L)
+      <input type="number" step="0.01" id="estimatedVolume" required>
+    </label>
+    <label>Current System pH
+      <input type="number" step="0.01" id="initialPH" required>
+    </label>
+    <button onclick="startTracking()">Start</button>
+  </div>
+
+  <div id="cycle" class="section" style="display:none">
+    <h2>New Adjustment Cycle</h2>
+    <label>pH Before Adding
+      <input type="number" step="0.01" id="phBefore">
+    </label>
+    <label>pH of Water to Add
+      <input type="number" step="0.01" id="phAdded">
+    </label>
+    <button onclick="recommendAddition()">Recommend Amount</button>
+
+    <div id="recommendation" style="margin-top:1rem; font-weight: bold;"></div>
+
+    <div id="additionSection" style="display:none">
+      <label>Volume Actually Added (L)
+        <input type="number" step="0.01" id="volumeAdded">
+      </label>
+      <button onclick="logAddition()">Log Addition</button>
+    </div>
+
+    <div id="phUpdateSection" style="display:none">
+      <label>pH After Waiting
+        <input type="number" step="0.01" id="phAfter">
+      </label>
+      <button onclick="updateVolumeEstimate()">Update Volume Estimate</button>
+    </div>
+  </div>
+
+  <div id="log" class="section">
+    <h2>Log</h2>
+    <div id="logEntries"></div>
+  </div>
+
+  <script>
+    let state = JSON.parse(localStorage.getItem('phAdjustState')) || {
+      targetPH: null,
+      estimatedVolume: null,
+      lastPH: null,
+      log: []
+    };
+
+    const save = () => localStorage.setItem('phAdjustState', JSON.stringify(state));
+    const h = pH => Math.pow(10, -pH);
+
+    function startTracking() {
+      state.targetPH = parseFloat(document.getElementById('targetPH').value);
+      state.estimatedVolume = parseFloat(document.getElementById('estimatedVolume').value);
+      state.lastPH = parseFloat(document.getElementById('initialPH').value);
+      save();
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('cycle').style.display = 'block';
+    }
+
+    function recommendAddition() {
+      const phBefore = parseFloat(document.getElementById('phBefore').value);
+      const phAdded = parseFloat(document.getElementById('phAdded').value);
+      const targetH = h(state.targetPH);
+      const H_u = h(phBefore);
+      const H_a = h(phAdded);
+      const V = state.estimatedVolume;
+
+      const numerator = V * (H_u - targetH);
+      const denominator = targetH - H_a;
+      const recommended = numerator / denominator;
+
+      document.getElementById('recommendation').textContent =
+        `Recommended volume to add: ${recommended.toFixed(3)} L`;
+
+      document.getElementById('additionSection').style.display = 'block';
+      state.currentCycle = {
+        time: new Date().toISOString(),
+        phBefore,
+        phAdded,
+        recommendedVolume: recommended
+      };
+      save();
+    }
+
+    function logAddition() {
+      const volumeAdded = parseFloat(document.getElementById('volumeAdded').value);
+      state.currentCycle.volumeAdded = volumeAdded;
+      document.getElementById('phUpdateSection').style.display = 'block';
+      save();
+
+      // Optional 30-min reminder
+      if ("Notification" in window) {
+        Notification.requestPermission().then(permission => {
+          if (permission === "granted") {
+            setTimeout(() => {
+              new Notification("Time to measure new pH!");
+            }, 1800000 / 30); // 30 minutes
+          }
+        });
+      }
+    }
+
+    function updateVolumeEstimate() {
+      const phAfter = parseFloat(document.getElementById('phAfter').value);
+      const { phBefore, phAdded, volumeAdded } = state.currentCycle;
+      const H_u = h(phBefore);
+      const H_a = h(phAdded);
+      const H_f = h(phAfter);
+
+      const newEstimate = volumeAdded * (H_f - H_a) / (H_u - H_f);
+      state.estimatedVolume = newEstimate;
+      state.lastPH = phAfter;
+      state.currentCycle.phAfter = phAfter;
+      state.currentCycle.volumeEstimate = newEstimate;
+
+      state.log.push(state.currentCycle);
+      delete state.currentCycle;
+      save();
+      renderLog();
+
+      // Reset cycle form
+      document.getElementById('phBefore').value = phAfter;
+      document.getElementById('phAdded').value = '';
+      document.getElementById('volumeAdded').value = '';
+      document.getElementById('phAfter').value = '';
+      document.getElementById('additionSection').style.display = 'none';
+      document.getElementById('phUpdateSection').style.display = 'none';
+      document.getElementById('recommendation').textContent = '';
+    }
+
+    function renderLog() {
+      const container = document.getElementById('logEntries');
+      container.innerHTML = '';
+      state.log.forEach((entry, i) => {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        div.innerHTML = `
+          <strong>Step ${i+1}</strong> - ${new Date(entry.time).toLocaleString()}<br>
+          Before: ${entry.phBefore}, Added Water pH: ${entry.phAdded}<br>
+          Volume Added: ${entry.volumeAdded} L<br>
+          After: ${entry.phAfter}<br>
+          Estimated Volume: ${entry.volumeEstimate.toFixed(2)} L
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    document.getElementById('reset').addEventListener('click', () => {
+      if (confirm('Are you sure you want to reset the process?')) {
+        localStorage.removeItem('phAdjustState');
+        location.reload();
+      }
+    });
+
+    // On page load
+    if (state.targetPH && state.estimatedVolume && state.lastPH) {
+      document.getElementById('setup').style.display = 'none';
+      document.getElementById('cycle').style.display = 'block';
+      document.getElementById('phBefore').value = state.lastPH;
+    }
+    renderLog();
+  </script>
+</body>
+</html>
